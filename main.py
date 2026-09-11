@@ -9,7 +9,16 @@ import sys
 import argparse
 from typing import List
 
-from password_generator import generate_password, generate_passphrase
+from password_generator import (
+    generate_password,
+    generate_passphrase,
+    get_pool_size,
+)
+from entropy import (
+    calculate_entropy,
+    estimate_crack_time,
+    classify_strength,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-symbols",
         action="store_true",
         help="Exclude symbols / special characters",
+    )
+    parser.add_argument(
+        "--exclude-ambiguous",
+        action="store_true",
+        help="Exclude visually confusable characters (0, O, o, 1, l, I, |)",
+    )
+    parser.add_argument(
+        "--avoid-sequential",
+        action="store_true",
+        help="Avoid 3+ sequential (e.g. 'abc', '123') or repeated ('aaa') characters",
     )
     parser.add_argument(
         "--passphrase",
@@ -147,23 +166,52 @@ def run_interactive() -> None:
                 break
             print("\n[!] Error: You must select at least one character type. Please try again.")
 
-        count = prompt_int("Number of passwords to generate", default=1, min_val=1)
+        print("\nSmart character rules:")
+        exc_ambig = prompt_bool("Exclude ambiguous characters (0/O, 1/l/I, etc.)?", default=False)
+        avoid_seq = prompt_bool("Avoid sequential or repeated characters (e.g., 'abc', '111')?", default=False)
+
+        count = prompt_int("\nNumber of passwords to generate", default=1, min_val=1)
+
+        pool_size = get_pool_size(
+            include_uppercase=inc_upper,
+            include_lowercase=inc_lower,
+            include_digits=inc_digits,
+            include_symbols=inc_symbols,
+            exclude_ambiguous=exc_ambig,
+        )
+
+        passwords: List[str] = []
+        for _ in range(count):
+            passwords.append(
+                generate_password(
+                    length=length,
+                    include_uppercase=inc_upper,
+                    include_lowercase=inc_lower,
+                    include_digits=inc_digits,
+                    include_symbols=inc_symbols,
+                    exclude_ambiguous=exc_ambig,
+                    avoid_sequential=avoid_seq,
+                )
+            )
 
         print("\n" + "=" * 45)
         print("Result:")
         print("=" * 45)
-        for i in range(count):
-            pwd = generate_password(
-                length=length,
-                include_uppercase=inc_upper,
-                include_lowercase=inc_lower,
-                include_digits=inc_digits,
-                include_symbols=inc_symbols,
-            )
+        for i, pwd in enumerate(passwords):
             if count > 1:
                 print(f"{i + 1}: {pwd}")
             else:
                 print(pwd)
+
+        entropy_bits = calculate_entropy(passwords[0], pool_size)
+        strength = classify_strength(entropy_bits)
+        crack_time = estimate_crack_time(entropy_bits)
+
+        print("-" * 45)
+        print("Password Strength:")
+        print(f"  Entropy:              {entropy_bits:.1f} bits")
+        print(f"  Strength:             {strength}")
+        print(f"  Estimated crack time: {crack_time}")
         print("=" * 45)
 
 
@@ -196,16 +244,36 @@ def run_cli(args: argparse.Namespace) -> int:
                 )
                 return 1
 
+            pool_size = get_pool_size(
+                include_uppercase=include_upper,
+                include_lowercase=include_lower,
+                include_digits=include_digits,
+                include_symbols=include_symbols,
+                exclude_ambiguous=args.exclude_ambiguous,
+            )
+
+            passwords: List[str] = []
             for _ in range(args.count):
-                print(
-                    generate_password(
-                        length=args.length,
-                        include_uppercase=include_upper,
-                        include_lowercase=include_lower,
-                        include_digits=include_digits,
-                        include_symbols=include_symbols,
-                    )
+                pwd = generate_password(
+                    length=args.length,
+                    include_uppercase=include_upper,
+                    include_lowercase=include_lower,
+                    include_digits=include_digits,
+                    include_symbols=include_symbols,
+                    exclude_ambiguous=args.exclude_ambiguous,
+                    avoid_sequential=args.avoid_sequential,
                 )
+                passwords.append(pwd)
+                print(pwd)
+
+            entropy_bits = calculate_entropy(passwords[0], pool_size)
+            strength = classify_strength(entropy_bits)
+            crack_time = estimate_crack_time(entropy_bits)
+
+            print(
+                f"\nEntropy: {entropy_bits:.1f} bits | Strength: {strength} | Est. crack time: {crack_time}"
+            )
+
         return 0
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -214,7 +282,6 @@ def run_cli(args: argparse.Namespace) -> int:
 
 def main() -> int:
     """Main entrypoint."""
-    # Check if run with no arguments at all
     if len(sys.argv) == 1:
         try:
             run_interactive()
