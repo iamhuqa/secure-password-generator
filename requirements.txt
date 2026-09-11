@@ -1,2 +1,1 @@
-# No external dependencies required for Phase 1.
-# The project uses Python's standard library (secrets, argparse, pathlib, string, sys).
+rich>=13.0.0

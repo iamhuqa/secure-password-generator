@@ -2,7 +2,7 @@
 """Main CLI entrypoint for Secure Password Generator.
 
 Supports command-line arguments via argparse as well as an interactive
-step-by-step wizard when invoked without arguments.
+step-by-step wizard when invoked without arguments, styled with Rich.
 """
 
 import sys
@@ -18,6 +18,15 @@ from entropy import (
     calculate_entropy,
     estimate_crack_time,
     classify_strength,
+)
+from ui import (
+    console,
+    display_error,
+    display_password_result,
+    display_passphrase_result,
+    display_multiple_results,
+    display_wizard_header,
+    display_section,
 )
 
 
@@ -97,11 +106,11 @@ def prompt_int(prompt_text: str, default: int, min_val: int = 1) -> int:
                 return default
             val = int(val_str)
             if val < min_val:
-                print(f"  Please enter a number >= {min_val}.")
+                console.print(f"  [yellow]Please enter a number >= {min_val}.[/yellow]")
                 continue
             return val
         except ValueError:
-            print("  Invalid number. Please enter a valid integer.")
+            console.print("  [yellow]Invalid number. Please enter a valid integer.[/yellow]")
 
 
 def prompt_bool(prompt_text: str, default: bool = True) -> bool:
@@ -115,48 +124,39 @@ def prompt_bool(prompt_text: str, default: bool = True) -> bool:
             return True
         if response in ("n", "no"):
             return False
-        print("  Please enter 'y' for yes or 'n' for no.")
+        console.print("  [yellow]Please enter 'y' for yes or 'n' for no.[/yellow]")
 
 
 def run_interactive() -> None:
     """Run an interactive wizard to guide the user step by step."""
-    print("=" * 45)
-    print("      Secure Password Generator (Interactive)      ")
-    print("=" * 45)
-    print("No CLI arguments detected. Let's configure your password:\n")
+    display_wizard_header()
 
-    print("Choose generation mode:")
-    print("  [1] Character-based password (default)")
-    print("  [2] Passphrase (word-based)")
+    console.print("[bold]Choose generation mode:[/bold]")
+    console.print("  [cyan][1][/cyan] Character-based password (default)")
+    console.print("  [cyan][2][/cyan] Passphrase (word-based)")
     mode_choice = input("Select mode [1/2] (default: 1): ").strip()
 
     if mode_choice == "2":
-        # Passphrase mode
-        print("\n--- Passphrase Settings ---")
+        display_section("Passphrase Settings")
         words = prompt_int("Enter number of words", default=6, min_val=1)
         sep = input("Enter word separator (default: '-'): ")
         if not sep:
             sep = "-"
         count = prompt_int("Number of passphrases to generate", default=1, min_val=1)
 
-        print("\n" + "=" * 45)
-        print("Result:")
-        print("=" * 45)
-        for i in range(count):
+        if count == 1:
             passphrase = generate_passphrase(words=words, separator=sep)
-            if count > 1:
-                print(f"{i + 1}: {passphrase}")
-            else:
-                print(passphrase)
-        print("=" * 45)
+            display_passphrase_result(passphrase)
+        else:
+            passphrases = [generate_passphrase(words=words, separator=sep) for _ in range(count)]
+            display_multiple_results(passphrases, is_passphrase=True)
 
     else:
-        # Character-based mode
-        print("\n--- Character Password Settings ---")
+        display_section("Character Password Settings")
         length = prompt_int("Enter password length", default=16, min_val=1)
 
         while True:
-            print("\nSelect character types to include:")
+            console.print("\n[bold]Select character types to include:[/bold]")
             inc_upper = prompt_bool("Include uppercase letters (A-Z)?", default=True)
             inc_lower = prompt_bool("Include lowercase letters (a-z)?", default=True)
             inc_digits = prompt_bool("Include digits (0-9)?", default=True)
@@ -164,9 +164,9 @@ def run_interactive() -> None:
 
             if inc_upper or inc_lower or inc_digits or inc_symbols:
                 break
-            print("\n[!] Error: You must select at least one character type. Please try again.")
+            display_error("You must select at least one character type. Please try again.")
 
-        print("\nSmart character rules:")
+        display_section("Smart Character Rules")
         exc_ambig = prompt_bool("Exclude ambiguous characters (0/O, 1/l/I, etc.)?", default=False)
         avoid_seq = prompt_bool("Avoid sequential or repeated characters (e.g., 'abc', '111')?", default=False)
 
@@ -180,67 +180,69 @@ def run_interactive() -> None:
             exclude_ambiguous=exc_ambig,
         )
 
-        passwords: List[str] = []
-        for _ in range(count):
-            passwords.append(
-                generate_password(
-                    length=length,
-                    include_uppercase=inc_upper,
-                    include_lowercase=inc_lower,
-                    include_digits=inc_digits,
-                    include_symbols=inc_symbols,
-                    exclude_ambiguous=exc_ambig,
-                    avoid_sequential=avoid_seq,
-                )
+        passwords: List[str] = [
+            generate_password(
+                length=length,
+                include_uppercase=inc_upper,
+                include_lowercase=inc_lower,
+                include_digits=inc_digits,
+                include_symbols=inc_symbols,
+                exclude_ambiguous=exc_ambig,
+                avoid_sequential=avoid_seq,
             )
-
-        print("\n" + "=" * 45)
-        print("Result:")
-        print("=" * 45)
-        for i, pwd in enumerate(passwords):
-            if count > 1:
-                print(f"{i + 1}: {pwd}")
-            else:
-                print(pwd)
+            for _ in range(count)
+        ]
 
         entropy_bits = calculate_entropy(passwords[0], pool_size)
         strength = classify_strength(entropy_bits)
         crack_time = estimate_crack_time(entropy_bits)
 
-        print("-" * 45)
-        print("Password Strength:")
-        print(f"  Entropy:              {entropy_bits:.1f} bits")
-        print(f"  Strength:             {strength}")
-        print(f"  Estimated crack time: {crack_time}")
-        print("=" * 45)
+        if count == 1:
+            display_password_result(passwords[0], entropy_bits, strength, crack_time)
+        else:
+            display_multiple_results(
+                passwords,
+                entropy_bits=entropy_bits,
+                strength=strength,
+                crack_time=crack_time,
+                is_passphrase=False,
+            )
 
 
 def run_cli(args: argparse.Namespace) -> int:
     """Execute password generation based on parsed command line arguments."""
     if args.count < 1:
-        print("Error: --count must be at least 1.", file=sys.stderr)
+        display_error("--count must be at least 1.")
         return 1
 
     try:
         if args.passphrase:
             if args.words < 1:
-                print("Error: --words must be at least 1.", file=sys.stderr)
+                display_error("--words must be at least 1.")
                 return 1
-            for _ in range(args.count):
-                print(generate_passphrase(words=args.words, separator=args.separator))
+
+            if args.count == 1:
+                passphrase = generate_passphrase(words=args.words, separator=args.separator)
+                display_passphrase_result(passphrase)
+            else:
+                passphrases = [
+                    generate_passphrase(words=args.words, separator=args.separator)
+                    for _ in range(args.count)
+                ]
+                display_multiple_results(passphrases, is_passphrase=True)
         else:
             if args.length < 1:
-                print("Error: --length must be at least 1.", file=sys.stderr)
+                display_error("--length must be at least 1.")
                 return 1
+
             include_upper = not args.no_uppercase
             include_lower = not args.no_lowercase
             include_digits = not args.no_digits
             include_symbols = not args.no_symbols
 
             if not (include_upper or include_lower or include_digits or include_symbols):
-                print(
-                    "Error: At least one character type must be included (all types were excluded).",
-                    file=sys.stderr,
+                display_error(
+                    "At least one character type must be included (all types were excluded)."
                 )
                 return 1
 
@@ -252,9 +254,8 @@ def run_cli(args: argparse.Namespace) -> int:
                 exclude_ambiguous=args.exclude_ambiguous,
             )
 
-            passwords: List[str] = []
-            for _ in range(args.count):
-                pwd = generate_password(
+            passwords: List[str] = [
+                generate_password(
                     length=args.length,
                     include_uppercase=include_upper,
                     include_lowercase=include_lower,
@@ -263,20 +264,27 @@ def run_cli(args: argparse.Namespace) -> int:
                     exclude_ambiguous=args.exclude_ambiguous,
                     avoid_sequential=args.avoid_sequential,
                 )
-                passwords.append(pwd)
-                print(pwd)
+                for _ in range(args.count)
+            ]
 
             entropy_bits = calculate_entropy(passwords[0], pool_size)
             strength = classify_strength(entropy_bits)
             crack_time = estimate_crack_time(entropy_bits)
 
-            print(
-                f"\nEntropy: {entropy_bits:.1f} bits | Strength: {strength} | Est. crack time: {crack_time}"
-            )
+            if args.count == 1:
+                display_password_result(passwords[0], entropy_bits, strength, crack_time)
+            else:
+                display_multiple_results(
+                    passwords,
+                    entropy_bits=entropy_bits,
+                    strength=strength,
+                    crack_time=crack_time,
+                    is_passphrase=False,
+                )
 
         return 0
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        display_error(str(exc))
         return 1
 
 
@@ -287,7 +295,7 @@ def main() -> int:
             run_interactive()
             return 0
         except (KeyboardInterrupt, EOFError):
-            print("\nOperation cancelled.", file=sys.stderr)
+            console.print("\n[yellow]Operation cancelled.[/yellow]")
             return 130
 
     parser = build_parser()
