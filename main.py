@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Main CLI entrypoint for Secure Password Generator.
+
+Supports command-line arguments via argparse as well as an interactive
+step-by-step wizard when invoked without arguments.
+"""
+
+import sys
+import argparse
+from typing import List
+
+from password_generator import generate_password, generate_passphrase
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create and configure the argparse argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Secure Password Generator - generate cryptographically secure passwords and passphrases."
+    )
+    parser.add_argument(
+        "--length",
+        type=int,
+        default=16,
+        help="Password length (default: 16)",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="Number of passwords or passphrases to generate (default: 1)",
+    )
+    parser.add_argument(
+        "--no-uppercase",
+        action="store_true",
+        help="Exclude uppercase letters (A-Z)",
+    )
+    parser.add_argument(
+        "--no-lowercase",
+        action="store_true",
+        help="Exclude lowercase letters (a-z)",
+    )
+    parser.add_argument(
+        "--no-digits",
+        action="store_true",
+        help="Exclude digits (0-9)",
+    )
+    parser.add_argument(
+        "--no-symbols",
+        action="store_true",
+        help="Exclude symbols / special characters",
+    )
+    parser.add_argument(
+        "--passphrase",
+        action="store_true",
+        help="Switch to passphrase mode instead of random characters",
+    )
+    parser.add_argument(
+        "--words",
+        type=int,
+        default=6,
+        help="Number of words when in passphrase mode (default: 6)",
+    )
+    parser.add_argument(
+        "--separator",
+        type=str,
+        default="-",
+        help="Separator character between passphrase words (default: '-')",
+    )
+    return parser
+
+
+def prompt_int(prompt_text: str, default: int, min_val: int = 1) -> int:
+    """Prompt the user for an integer with a default value and minimum bound."""
+    while True:
+        try:
+            val_str = input(f"{prompt_text} (default: {default}): ").strip()
+            if not val_str:
+                return default
+            val = int(val_str)
+            if val < min_val:
+                print(f"  Please enter a number >= {min_val}.")
+                continue
+            return val
+        except ValueError:
+            print("  Invalid number. Please enter a valid integer.")
+
+
+def prompt_bool(prompt_text: str, default: bool = True) -> bool:
+    """Prompt the user for a yes/no boolean answer."""
+    hint = "[Y/n]" if default else "[y/N]"
+    while True:
+        response = input(f"{prompt_text} {hint}: ").strip().lower()
+        if not response:
+            return default
+        if response in ("y", "yes"):
+            return True
+        if response in ("n", "no"):
+            return False
+        print("  Please enter 'y' for yes or 'n' for no.")
+
+
+def run_interactive() -> None:
+    """Run an interactive wizard to guide the user step by step."""
+    print("=" * 45)
+    print("      Secure Password Generator (Interactive)      ")
+    print("=" * 45)
+    print("No CLI arguments detected. Let's configure your password:\n")
+
+    print("Choose generation mode:")
+    print("  [1] Character-based password (default)")
+    print("  [2] Passphrase (word-based)")
+    mode_choice = input("Select mode [1/2] (default: 1): ").strip()
+
+    if mode_choice == "2":
+        # Passphrase mode
+        print("\n--- Passphrase Settings ---")
+        words = prompt_int("Enter number of words", default=6, min_val=1)
+        sep = input("Enter word separator (default: '-'): ")
+        if not sep:
+            sep = "-"
+        count = prompt_int("Number of passphrases to generate", default=1, min_val=1)
+
+        print("\n" + "=" * 45)
+        print("Result:")
+        print("=" * 45)
+        for i in range(count):
+            passphrase = generate_passphrase(words=words, separator=sep)
+            if count > 1:
+                print(f"{i + 1}: {passphrase}")
+            else:
+                print(passphrase)
+        print("=" * 45)
+
+    else:
+        # Character-based mode
+        print("\n--- Character Password Settings ---")
+        length = prompt_int("Enter password length", default=16, min_val=1)
+
+        while True:
+            print("\nSelect character types to include:")
+            inc_upper = prompt_bool("Include uppercase letters (A-Z)?", default=True)
+            inc_lower = prompt_bool("Include lowercase letters (a-z)?", default=True)
+            inc_digits = prompt_bool("Include digits (0-9)?", default=True)
+            inc_symbols = prompt_bool("Include symbols (!@#$...)?", default=True)
+
+            if inc_upper or inc_lower or inc_digits or inc_symbols:
+                break
+            print("\n[!] Error: You must select at least one character type. Please try again.")
+
+        count = prompt_int("Number of passwords to generate", default=1, min_val=1)
+
+        print("\n" + "=" * 45)
+        print("Result:")
+        print("=" * 45)
+        for i in range(count):
+            pwd = generate_password(
+                length=length,
+                include_uppercase=inc_upper,
+                include_lowercase=inc_lower,
+                include_digits=inc_digits,
+                include_symbols=inc_symbols,
+            )
+            if count > 1:
+                print(f"{i + 1}: {pwd}")
+            else:
+                print(pwd)
+        print("=" * 45)
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    """Execute password generation based on parsed command line arguments."""
+    if args.count < 1:
+        print("Error: --count must be at least 1.", file=sys.stderr)
+        return 1
+
+    try:
+        if args.passphrase:
+            if args.words < 1:
+                print("Error: --words must be at least 1.", file=sys.stderr)
+                return 1
+            for _ in range(args.count):
+                print(generate_passphrase(words=args.words, separator=args.separator))
+        else:
+            if args.length < 1:
+                print("Error: --length must be at least 1.", file=sys.stderr)
+                return 1
+            include_upper = not args.no_uppercase
+            include_lower = not args.no_lowercase
+            include_digits = not args.no_digits
+            include_symbols = not args.no_symbols
+
+            if not (include_upper or include_lower or include_digits or include_symbols):
+                print(
+                    "Error: At least one character type must be included (all types were excluded).",
+                    file=sys.stderr,
+                )
+                return 1
+
+            for _ in range(args.count):
+                print(
+                    generate_password(
+                        length=args.length,
+                        include_uppercase=include_upper,
+                        include_lowercase=include_lower,
+                        include_digits=include_digits,
+                        include_symbols=include_symbols,
+                    )
+                )
+        return 0
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def main() -> int:
+    """Main entrypoint."""
+    # Check if run with no arguments at all
+    if len(sys.argv) == 1:
+        try:
+            run_interactive()
+            return 0
+        except (KeyboardInterrupt, EOFError):
+            print("\nOperation cancelled.", file=sys.stderr)
+            return 130
+
+    parser = build_parser()
+    args = parser.parse_args()
+    return run_cli(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
