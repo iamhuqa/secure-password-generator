@@ -80,16 +80,21 @@ def display_password_result(
     style = get_strength_style(strength)
     bar = render_strength_bar(entropy_bits, strength)
 
-    # Main password panel
-    pwd_text = Text(password, style="bold bright_white")
+    # Main password panel with dynamic width to prevent caption clipping
+    subtitle_text = f"Length: {len(password)} characters"
+    title_text = "Generated Password"
+    needed_width = max(len(password), len(title_text), len(subtitle_text)) + 8
+    panel_width = max(needed_width, 32)
+
+    pwd_text = Text(password, style="bold bright_white", justify="center")
     panel = Panel(
         pwd_text,
         title="[bold cyan]Generated Password[/bold cyan]",
-        subtitle=f"[dim]Length: {len(password)} characters[/dim]",
+        subtitle=f"[dim]{subtitle_text}[/dim]",
         border_style="cyan",
         box=box.ROUNDED,
-        expand=False,
-        padding=(1, 3),
+        width=panel_width,
+        padding=(1, 2),
     )
     console.print()
     console.print(panel)
@@ -118,14 +123,19 @@ def display_passphrase_result(passphrase: str) -> None:
     Args:
         passphrase: The generated passphrase string.
     """
+    subtitle_text = "EFF Diceware Cryptographic Wordlist"
+    title_text = "Generated Passphrase"
+    needed_width = max(len(passphrase), len(title_text), len(subtitle_text)) + 8
+    panel_width = max(needed_width, 42)
+
     panel = Panel(
-        Text(passphrase, style="bold bright_yellow"),
+        Text(passphrase, style="bold bright_yellow", justify="center"),
         title="[bold green]Generated Passphrase[/bold green]",
-        subtitle="[dim]EFF Diceware Cryptographic Wordlist[/dim]",
+        subtitle=f"[dim]{subtitle_text}[/dim]",
         border_style="green",
         box=box.ROUNDED,
-        expand=False,
-        padding=(1, 3),
+        width=panel_width,
+        padding=(1, 2),
     )
     console.print()
     console.print(panel)
