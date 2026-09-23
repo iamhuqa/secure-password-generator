@@ -231,6 +231,46 @@ def display_breach_result(count: Optional[int]) -> None:
     console.print()
 
 
+def display_export_confirmation(count: int, filepath: str, is_passphrase: bool = False) -> None:
+    """Display confirmation message after exporting generated items."""
+    item_type = "passphrase" if is_passphrase else "password"
+    plural = f"{item_type}s" if count != 1 else item_type
+    console.print(f"[bold green][✓] Exported {count} {plural} to {filepath}[/bold green]\n")
+
+
+def display_clipboard_message(seconds: int) -> None:
+    """Display notification that item was copied to clipboard with auto-clear countdown."""
+    console.print(f"[bold cyan][📋] Copied to clipboard — will auto-clear in {seconds} seconds[/bold cyan]\n")
+
+
+def display_profiles_list(profiles: List[str]) -> None:
+    """Display a table of available config profiles."""
+    if not profiles:
+        console.print("[yellow]No saved profiles found in config_profiles/.[/yellow]\n")
+        return
+
+    table = Table(
+        title="[bold cyan]Saved Configuration Profiles[/bold cyan]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("#", justify="right", style="bold cyan", width=4)
+    table.add_column("Profile Name", style="bold white")
+
+    for idx, p in enumerate(profiles, start=1):
+        table.add_row(str(idx), p)
+
+    console.print()
+    console.print(table)
+    console.print("[dim]Load any profile using: python main.py --load-profile <name>[/dim]\n")
+
+
+def display_profile_saved(name: str, filepath: str) -> None:
+    """Display confirmation that a profile was saved."""
+    console.print(f"[bold green][✓] Profile '{name}' saved to {filepath}[/bold green]\n")
+
+
 def display_error(message: str) -> None:
     """Display an error message using Rich red styling."""
     error_console.print(f"[bold red][!] Error:[/] {message}")

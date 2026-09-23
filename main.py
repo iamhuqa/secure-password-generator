@@ -7,7 +7,13 @@ step-by-step wizard when invoked without arguments, styled with Rich.
 
 import sys
 import argparse
-from typing import List
+import csv
+import threading
+import time
+from pathlib import Path
+from typing import List, Optional
+
+import pyperclip
 
 from password_generator import (
     generate_password,
@@ -20,6 +26,7 @@ from entropy import (
     classify_strength,
 )
 from breach_check import check_password_breach
+from profiles import save_profile, load_profile, list_profiles
 from ui import (
     console,
     display_error,
@@ -27,6 +34,10 @@ from ui import (
     display_passphrase_result,
     display_multiple_results,
     display_breach_result,
+    display_export_confirmation,
+    display_clipboard_message,
+    display_profiles_list,
+    display_profile_saved,
     display_wizard_header,
     display_section,
 )
@@ -51,23 +62,51 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-uppercase",
+        dest="no_uppercase",
         action="store_true",
         help="Exclude uppercase letters (A-Z)",
     )
     parser.add_argument(
+        "--uppercase",
+        dest="no_uppercase",
+        action="store_false",
+        help="Include uppercase letters (A-Z)",
+    )
+    parser.add_argument(
         "--no-lowercase",
+        dest="no_lowercase",
         action="store_true",
         help="Exclude lowercase letters (a-z)",
     )
     parser.add_argument(
+        "--lowercase",
+        dest="no_lowercase",
+        action="store_false",
+        help="Include lowercase letters (a-z)",
+    )
+    parser.add_argument(
         "--no-digits",
+        dest="no_digits",
         action="store_true",
         help="Exclude digits (0-9)",
     )
     parser.add_argument(
+        "--digits",
+        dest="no_digits",
+        action="store_false",
+        help="Include digits (0-9)",
+    )
+    parser.add_argument(
         "--no-symbols",
+        dest="no_symbols",
         action="store_true",
         help="Exclude symbols / special characters",
+    )
+    parser.add_argument(
+        "--symbols",
+        dest="no_symbols",
+        action="store_false",
+        help="Include symbols / special characters",
     )
     parser.add_argument(
         "--exclude-ambiguous",
@@ -101,7 +140,102 @@ def build_parser() -> argparse.ArgumentParser:
         default="-",
         help="Separator character between passphrase words (default: '-')",
     )
+    # Phase 5: Export, Clipboard auto-clear, and Config profiles
+    parser.add_argument(
+        "--export",
+        type=str,
+        default=None,
+        metavar="FILEPATH",
+        help="Export generated passwords/passphrases to a .csv or .txt file",
+    )
+    parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="Copy the first generated password/passphrase to the system clipboard",
+    )
+    parser.add_argument(
+        "--clear-after",
+        type=int,
+        default=30,
+        metavar="SECONDS",
+        help="Seconds before auto-clearing clipboard if unchanged (default: 30)",
+    )
+    parser.add_argument(
+        "--save-profile",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Save current configuration settings as a named profile",
+    )
+    parser.add_argument(
+        "--load-profile",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Load settings from a named configuration profile",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List all saved configuration profiles and exit",
+    )
     return parser
+
+
+def copy_to_clipboard_with_autoclear(target_text: str, delay_seconds: int = 30) -> None:
+    """Copy text to clipboard and launch a background thread to clear it after delay."""
+    try:
+        pyperclip.copy(target_text)
+    except Exception as exc:
+        display_error(f"Failed to copy to clipboard: {exc}")
+        return
+
+    def _clear_worker():
+        time.sleep(delay_seconds)
+        try:
+            current = pyperclip.paste()
+            if current == target_text:
+                pyperclip.copy("")
+        except Exception:
+            pass
+
+    thread = threading.Thread(target=_clear_worker, name="ClipboardAutoClear", daemon=False)
+    thread.start()
+    display_clipboard_message(delay_seconds)
+
+
+def export_items_to_file(
+    filepath: str,
+    items: List[str],
+    entropy_bits: Optional[float] = None,
+    strength: Optional[str] = None,
+    is_passphrase: bool = False,
+) -> None:
+    """Export generated passwords or passphrases to a .csv or .txt file."""
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ext = path.suffix.lower()
+
+    if ext == ".csv":
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not is_passphrase and entropy_bits is not None and strength is not None:
+                writer.writerow(["password", "entropy_bits", "strength"])
+                for item in items:
+                    writer.writerow([item, f"{entropy_bits:.1f}", strength])
+            else:
+                header = "passphrase" if is_passphrase else "password"
+                writer.writerow([header])
+                for item in items:
+                    writer.writerow([item])
+        display_export_confirmation(len(items), str(path), is_passphrase=is_passphrase)
+    elif ext == ".txt":
+        with open(path, "w", encoding="utf-8") as f:
+            for item in items:
+                f.write(f"{item}\n")
+        display_export_confirmation(len(items), str(path), is_passphrase=is_passphrase)
+    else:
+        raise ValueError(f"Unsupported export format '{ext}'. Only .csv and .txt are supported.")
 
 
 def prompt_int(prompt_text: str, default: int, min_val: int = 1) -> int:
@@ -143,7 +277,9 @@ def run_interactive() -> None:
     console.print("  [cyan][2][/cyan] Passphrase (word-based)")
     mode_choice = input("Select mode [1/2] (default: 1): ").strip()
 
-    if mode_choice == "2":
+    is_passphrase = mode_choice == "2"
+
+    if is_passphrase:
         display_section("Passphrase Settings")
         words = prompt_int("Enter number of words", default=6, min_val=1)
         sep = input("Enter word separator (default: '-'): ")
@@ -151,12 +287,29 @@ def run_interactive() -> None:
             sep = "-"
         count = prompt_int("Number of passphrases to generate", default=1, min_val=1)
 
+        display_section("Options & Clipboard")
+        copy_clip = prompt_bool("Copy first result to clipboard (with auto-clear)?", default=False)
+        clear_delay = 30
+        if copy_clip:
+            clear_delay = prompt_int("Seconds before clipboard auto-clears", default=30, min_val=1)
+
+        export_file = input("Export results to file? (e.g. passphrases.txt, or press Enter to skip): ").strip()
+
+        passphrases = [generate_passphrase(words=words, separator=sep) for _ in range(count)]
+
         if count == 1:
-            passphrase = generate_passphrase(words=words, separator=sep)
-            display_passphrase_result(passphrase)
+            display_passphrase_result(passphrases[0])
         else:
-            passphrases = [generate_passphrase(words=words, separator=sep) for _ in range(count)]
             display_multiple_results(passphrases, is_passphrase=True)
+
+        if export_file:
+            try:
+                export_items_to_file(export_file, passphrases, is_passphrase=True)
+            except Exception as exc:
+                display_error(f"Export failed: {exc}")
+
+        if copy_clip and passphrases:
+            copy_to_clipboard_with_autoclear(passphrases[0], delay_seconds=clear_delay)
 
     else:
         display_section("Character Password Settings")
@@ -180,7 +333,14 @@ def run_interactive() -> None:
         display_section("Breach Database Check")
         check_breach = prompt_bool("Check this password against known data breaches?", default=False)
 
-        count = prompt_int("\nNumber of passwords to generate", default=1, min_val=1)
+        display_section("Options & Clipboard")
+        count = prompt_int("Number of passwords to generate", default=1, min_val=1)
+        copy_clip = prompt_bool("Copy first result to clipboard (with auto-clear)?", default=False)
+        clear_delay = 30
+        if copy_clip:
+            clear_delay = prompt_int("Seconds before clipboard auto-clears", default=30, min_val=1)
+
+        export_file = input("Export results to file? (e.g. passwords.csv, or press Enter to skip): ").strip()
 
         pool_size = get_pool_size(
             include_uppercase=inc_upper,
@@ -226,6 +386,21 @@ def run_interactive() -> None:
                     breach_count = check_password_breach(pwd)
                     display_breach_result(breach_count)
 
+        if export_file:
+            try:
+                export_items_to_file(
+                    export_file,
+                    passwords,
+                    entropy_bits=entropy_bits,
+                    strength=strength,
+                    is_passphrase=False,
+                )
+            except Exception as exc:
+                display_error(f"Export failed: {exc}")
+
+        if copy_clip and passwords:
+            copy_to_clipboard_with_autoclear(passwords[0], delay_seconds=clear_delay)
+
 
 def run_cli(args: argparse.Namespace) -> int:
     """Execute password generation based on parsed command line arguments."""
@@ -239,15 +414,22 @@ def run_cli(args: argparse.Namespace) -> int:
                 display_error("--words must be at least 1.")
                 return 1
 
+            passphrases = [
+                generate_passphrase(words=args.words, separator=args.separator)
+                for _ in range(args.count)
+            ]
+
             if args.count == 1:
-                passphrase = generate_passphrase(words=args.words, separator=args.separator)
-                display_passphrase_result(passphrase)
+                display_passphrase_result(passphrases[0])
             else:
-                passphrases = [
-                    generate_passphrase(words=args.words, separator=args.separator)
-                    for _ in range(args.count)
-                ]
                 display_multiple_results(passphrases, is_passphrase=True)
+
+            if args.export:
+                export_items_to_file(args.export, passphrases, is_passphrase=True)
+
+            if args.copy and passphrases:
+                copy_to_clipboard_with_autoclear(passphrases[0], delay_seconds=args.clear_after)
+
         else:
             if args.length < 1:
                 display_error("--length must be at least 1.")
@@ -308,6 +490,39 @@ def run_cli(args: argparse.Namespace) -> int:
                         breach_count = check_password_breach(pwd)
                         display_breach_result(breach_count)
 
+            if args.export:
+                export_items_to_file(
+                    args.export,
+                    passwords,
+                    entropy_bits=entropy_bits,
+                    strength=strength,
+                    is_passphrase=False,
+                )
+
+            if args.copy and passwords:
+                copy_to_clipboard_with_autoclear(passwords[0], delay_seconds=args.clear_after)
+
+        # Save profile if requested
+        if args.save_profile:
+            profile_settings = {
+                "length": args.length,
+                "count": args.count,
+                "no_uppercase": args.no_uppercase,
+                "no_lowercase": args.no_lowercase,
+                "no_digits": args.no_digits,
+                "no_symbols": args.no_symbols,
+                "exclude_ambiguous": args.exclude_ambiguous,
+                "avoid_sequential": args.avoid_sequential,
+                "check_breach": args.check_breach,
+                "passphrase": args.passphrase,
+                "words": args.words,
+                "separator": args.separator,
+                "copy": args.copy,
+                "clear_after": args.clear_after,
+            }
+            saved_path = save_profile(args.save_profile, profile_settings)
+            display_profile_saved(args.save_profile, str(saved_path))
+
         return 0
     except Exception as exc:
         display_error(str(exc))
@@ -316,6 +531,10 @@ def run_cli(args: argparse.Namespace) -> int:
 
 def main() -> int:
     """Main entrypoint."""
+    if "--list-profiles" in sys.argv:
+        display_profiles_list(list_profiles())
+        return 0
+
     if len(sys.argv) == 1:
         try:
             run_interactive()
@@ -325,6 +544,20 @@ def main() -> int:
             return 130
 
     parser = build_parser()
+
+    # Pre-parse --load-profile to configure defaults before final parse
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--load-profile", type=str, default=None)
+    pre_args, _ = pre_parser.parse_known_args()
+
+    if pre_args.load_profile:
+        try:
+            profile_data = load_profile(pre_args.load_profile)
+            parser.set_defaults(**profile_data)
+        except Exception as exc:
+            display_error(str(exc))
+            return 1
+
     args = parser.parse_args()
     return run_cli(args)
 
