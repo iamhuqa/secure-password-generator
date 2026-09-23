@@ -190,6 +190,47 @@ def display_multiple_results(
     console.print()
 
 
+def display_breach_result(count: Optional[int]) -> None:
+    """Display breach check results in a styled panel.
+
+    Args:
+        count: Number of breaches found, 0 if clean, or None if check failed.
+    """
+    if count is None:
+        panel = Panel(
+            "[yellow]Could not connect to HaveIBeenPwned API (network error or timeout).[/yellow]\n"
+            "[dim]Breach status could not be verified, but the password remains valid.[/dim]",
+            title="[bold yellow]Breach Check: Unavailable[/bold yellow]",
+            border_style="yellow",
+            box=box.ROUNDED,
+            expand=False,
+            padding=(1, 3),
+        )
+    elif count > 0:
+        panel = Panel(
+            f"[bold red]WARNING: This password was found in [underline]{count:,}[/underline] known data breaches![/bold red]\n"
+            "[white]This password is compromised and should NOT be used for any sensitive account.[/white]",
+            title="[bold red]Breach Check: COMPROMISED[/bold red]",
+            border_style="red",
+            box=box.ROUNDED,
+            expand=False,
+            padding=(1, 3),
+        )
+    else:
+        panel = Panel(
+            "[bold green]Good news — not found in any known public data breaches![/bold green]\n"
+            "[dim]Checked via HaveIBeenPwned Pwned Passwords API (k-anonymity privacy model).[/dim]",
+            title="[bold green]Breach Check: Clean[/bold green]",
+            border_style="green",
+            box=box.ROUNDED,
+            expand=False,
+            padding=(1, 3),
+        )
+
+    console.print(panel)
+    console.print()
+
+
 def display_error(message: str) -> None:
     """Display an error message using Rich red styling."""
     error_console.print(f"[bold red][!] Error:[/] {message}")

@@ -19,12 +19,14 @@ from entropy import (
     estimate_crack_time,
     classify_strength,
 )
+from breach_check import check_password_breach
 from ui import (
     console,
     display_error,
     display_password_result,
     display_passphrase_result,
     display_multiple_results,
+    display_breach_result,
     display_wizard_header,
     display_section,
 )
@@ -76,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--avoid-sequential",
         action="store_true",
         help="Avoid 3+ sequential (e.g. 'abc', '123') or repeated ('aaa') characters",
+    )
+    parser.add_argument(
+        "--check-breach",
+        action="store_true",
+        help="Check generated password(s) against HaveIBeenPwned breach database using k-anonymity",
     )
     parser.add_argument(
         "--passphrase",
@@ -170,6 +177,9 @@ def run_interactive() -> None:
         exc_ambig = prompt_bool("Exclude ambiguous characters (0/O, 1/l/I, etc.)?", default=False)
         avoid_seq = prompt_bool("Avoid sequential or repeated characters (e.g., 'abc', '111')?", default=False)
 
+        display_section("Breach Database Check")
+        check_breach = prompt_bool("Check this password against known data breaches?", default=False)
+
         count = prompt_int("\nNumber of passwords to generate", default=1, min_val=1)
 
         pool_size = get_pool_size(
@@ -199,6 +209,9 @@ def run_interactive() -> None:
 
         if count == 1:
             display_password_result(passwords[0], entropy_bits, strength, crack_time)
+            if check_breach:
+                breach_count = check_password_breach(passwords[0])
+                display_breach_result(breach_count)
         else:
             display_multiple_results(
                 passwords,
@@ -207,6 +220,11 @@ def run_interactive() -> None:
                 crack_time=crack_time,
                 is_passphrase=False,
             )
+            if check_breach:
+                for i, pwd in enumerate(passwords, start=1):
+                    console.print(f"[bold cyan]Breach status for Password #{i}:[/bold cyan]")
+                    breach_count = check_password_breach(pwd)
+                    display_breach_result(breach_count)
 
 
 def run_cli(args: argparse.Namespace) -> int:
@@ -273,6 +291,9 @@ def run_cli(args: argparse.Namespace) -> int:
 
             if args.count == 1:
                 display_password_result(passwords[0], entropy_bits, strength, crack_time)
+                if args.check_breach:
+                    breach_count = check_password_breach(passwords[0])
+                    display_breach_result(breach_count)
             else:
                 display_multiple_results(
                     passwords,
@@ -281,6 +302,11 @@ def run_cli(args: argparse.Namespace) -> int:
                     crack_time=crack_time,
                     is_passphrase=False,
                 )
+                if args.check_breach:
+                    for i, pwd in enumerate(passwords, start=1):
+                        console.print(f"[bold cyan]Breach status for Password #{i}:[/bold cyan]")
+                        breach_count = check_password_breach(pwd)
+                        display_breach_result(breach_count)
 
         return 0
     except Exception as exc:
